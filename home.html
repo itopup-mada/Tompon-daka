@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="mg">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tompon-daka - Home</title>
+  <style>
+    body { font-family: sans-serif; background: #e3f2fd; text-align: center; padding: 20px; }
+    input { padding: 10px; width: 200px; border: 1px solid #ccc; border-radius: 5px; }
+    button { padding: 10px 20px; cursor: pointer; border-radius: 5px; border: none; font-weight: bold; margin: 5px; }
+    #playBtn { background: #4caf50; color: white; }
+    #searchBtn { background: #2196f3; color: white; }
+    #invitationModal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 3px solid #2196f3; padding: 20px; border-radius: 10px; z-index: 1000; box-shadow: 0 0 20px rgba(0,0,0,0.3); }
+    #selection-section { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 2000; flex-direction: column; justify-content: center; align-items: center; color: white; }
+    #random-box { width: 150px; height: 150px; background: white; border-radius: 15px; display: flex; justify-content: center; align-items: center; margin-bottom: 20px; }
+    #random-img { width: 120px; height: 120px; object-fit: contain; }
+  </style>
+</head>
+<body>
+
+  <div id="selection-section">
+    <h2 id="selection-text">Mifidy loko...</h2>
+    <div id="random-box"><img id="random-img" src="button-red.png"></div>
+  </div>
+
+  <h1>Tompon-daka</h1>
+    <p>Anarana: <strong id="myName">...</strong></p>
+    <p>UID: <span id="myUid" style="color: blue; font-family: monospace; font-size: 0.8em;">...</span></p>
+    <hr>
+    <input type="text" id="searchUid" placeholder="Ampidiro ny UID">
+    <button id="searchBtn">Recherche</button>
+    <div id="resultArea" style="display: none; margin-top: 15px;">
+      <strong id="foundName"></strong><br>
+      <button id="playBtn">ILALAO</button>
+    </div>
+
+  <div id="invitationModal">
+    <p><strong id="inviterName">...</strong> dia manasa anao!</p>
+    <button style="background:#4caf50; color:white;" id="acceptBtn">Hanaiky</button>
+    <button style="background:#f44336; color:white;" id="rejectBtn">Handa</button>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
+        "firebase/database": "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import { initializeApp } from "firebase/app";
+    import { getAuth, onAuthStateChanged } from "firebase/auth";
+    import { getDatabase, ref, get, set, child, onValue, update, remove } from "firebase/database";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBdQzLO1C2lxlxDjheRTF0_tqE0LdGyTac",
+      authDomain: "tompon-daka.firebaseapp.com",
+      databaseURL: "https://tompon-daka-default-rtdb.firebaseio.com", 
+      projectId: "tompon-daka",
+      appId: "1:821210063213:web:79a15213fadb172555fa64"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    let myUID = "", myName = "";
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        myUID = user.uid; myName = user.displayName || "Mpilalao";
+        document.getElementById('myName').innerText = myName;
+        document.getElementById('myUid').innerText = myUID;
+        listenForInvitations();
+      }
+    });
+
+    document.getElementById('searchBtn').onclick = async () => {
+      const id = document.getElementById('searchUid').value.trim();
+      const snap = await get(child(ref(db), `users/${id}`));
+      if (snap.exists() && id !== myUID) {
+        document.getElementById('resultArea').style.display = "block";
+        document.getElementById('foundName').innerText = snap.val().displayName;
+        const targetUID = id;
+        document.getElementById('playBtn').onclick = () => sendInvitation(targetUID);
+      } else alert("Tsy hita!");
+    };
+
+    async function sendInvitation(targetUID) {
+      const seed = Math.floor(Math.random() * 2);
+      const gID = myUID < targetUID ? myUID + "_" + targetUID : targetUID + "_" + myUID;
+      
+      // 1. Fafana ny lalao taloha raha nisy
+      await remove(ref(db, 'games/' + gID));
+      
+      // 2. Mandefa fanasana
+      await set(ref(db, 'invitations/' + targetUID), { 
+        fromUID: myUID, fromName: myName, status: "pending", colorSeed: seed, gId: gID 
+      });
+      
+      const invRef = ref(db, 'invitations/' + targetUID);
+      onValue(invRef, (snap) => {
+        const data = snap.val();
+        if (data?.status === "accepted") {
+          const color = (seed === 0) ? "mena" : "maintso";
+          startSelectionAnimation(color, gID);
+        }
+      });
+    }
+
+    function listenForInvitations() {
+      onValue(ref(db, 'invitations/' + myUID), (snap) => {
+        const data = snap.val();
+        if (data?.status === "pending") {
+          document.getElementById('invitationModal').style.display = "block";
+          document.getElementById('inviterName').innerText = data.fromName;
+          
+          document.getElementById('acceptBtn').onclick = async () => {
+            const color = (data.colorSeed === 0) ? "maintso" : "mena";
+            await update(ref(db, 'invitations/' + myUID), { status: "accepted" });
+            startSelectionAnimation(color, data.gId);
+          };
+          document.getElementById('rejectBtn').onclick = async () => {
+            await remove(ref(db, 'invitations/' + myUID));
+            document.getElementById('invitationModal').style.display = "none";
+          };
+        }
+      });
+    }
+
+    function startSelectionAnimation(color, gameID) {
+      document.getElementById('invitationModal').style.display = "none";
+      const section = document.getElementById('selection-section');
+      section.style.display = "flex";
+      const img = document.getElementById('random-img');
+      let i = 0;
+      let timer = setInterval(() => { 
+        img.src = (i % 2 === 0) ? "button-red.png" : "button-green.png"; 
+        i++; 
+      }, 100);
+
+      setTimeout(() => {
+        clearInterval(timer);
+        img.src = (color === "mena") ? "button-red.png" : "button-green.png";
+        document.getElementById('selection-text').innerText = "Lokonao: " + color.toUpperCase();
+        setTimeout(() => {
+          window.location.href = `game.html?gameID=${gameID}&color=${color}`;
+        }, 2000);
+      }, 3000);
+    }
+  </script>
+</body>
+  </html>
