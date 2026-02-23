@@ -1,13 +1,8 @@
 import jwt from "jsonwebtoken";
 
 const SECRET = process.env.JWT_SECRET;
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
 
 export default function handler(req, res) {
-
-  if (req.headers.origin !== allowedOrigin) {
-    return res.status(403).json({ error: "Forbidden origin" });
-  }
 
   const auth = req.headers.authorization;
   if (!auth) return res.status(401).end();
