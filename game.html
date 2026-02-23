@@ -10,7 +10,7 @@
     .flipped { transform: rotate(180deg); }
     .grid-line { stroke: #333; stroke-width: 2; }
     
-    /* Animation an'ny pio - 0.5s hisosa tsara */
+    /* Animation hisosa tsara (0.2s) */
     .piece-group { transition: transform 0.2s ease-in-out; }
     
     .selected-piece { stroke: #FFF700; stroke-width: 5px; paint-order: stroke; filter: drop-shadow(0 0 8px yellow); }
@@ -33,7 +33,7 @@
 <body>
 
   <div id="info-box">
-    <h2 id="turn-display">Miandry...</h2>
+    <h2 id="turn-display">Mampiditra...</h2>
   </div>
 
   <svg id="game-board" viewBox="-50 -50 500 300">
@@ -87,7 +87,9 @@
     const rows = ['A','B','C','D','E'], cols = ['1','2','3','4','5','6','7','8','9'];
     let selectedSpot = null, lastBlockedSpot = null, canChangePiece = true;
     let pendingCaptures = { approach: [], withdrawal: [], moveData: null, newVisited: [] };
-    let pieceRegistry = {}; // Mitazona ny DOM element an'ny pio tsirairay
+    
+    // Mitahiry ireo elements pio mivantana amin'ny toerana misy azy
+    let piecesOnBoard = {}; 
 
     const allowedMoves = {
       'A1': ['A2','B1','B2'], 'A2': ['A1','A3','B2'], 'A3': ['A2','A4','B2','B3','B4'],
@@ -116,23 +118,6 @@
       const board = document.getElementById('game-board');
       if (myColor === "mena") board.classList.add('flipped');
       drawBoardSpots();
-      const gameRef = ref(db, 'games/' + gameID);
-      const snap = await get(gameRef);
-      if (!snap.exists()) {
-        const pieces = {};
-        rows.forEach((r, ri) => {
-          cols.forEach((c, ci) => {
-            let key = r + c;
-            if (ri < 2) pieces[key] = "mena";
-            else if (ri > 2) pieces[key] = "maintso";
-            else {
-              if ([1, 3, 6, 8].includes(ci)) pieces[key] = "mena";
-              else if ([0, 2, 5, 7].includes(ci)) pieces[key] = "maintso";
-            }
-          });
-        });
-        await set(gameRef, { pieces, turn: "maintso", movingPiece: "", visited: [], lastDir: "" });
-      }
       watchGame();
     }
 
@@ -157,6 +142,7 @@
         if (!data) return;
         const display = document.getElementById('turn-display');
         const stopBtn = document.getElementById('stop-move-btn');
+        
         if (data.turn === myColor) {
           display.innerText = "ANJARANAO"; display.style.color = "#ADFF2F";
           if (data.movingPiece) { 
@@ -177,77 +163,66 @@
       });
     }
 
-    function playerHasAnyCapture(pieces, color) {
-        for (let spot in pieces) {
-            if (pieces[spot] === color) {
-                const moves = allowedMoves[spot] || [];
-                for (let target of moves) {
-                    if (!pieces[target]) {
-                        const caps = getCaptures(pieces, spot, target, color);
-                        if (caps.approach.length > 0 || caps.withdrawal.length > 0) return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    // VAOVAO: Fomba fanaovana sary tsy mamafa ny pieces rehetra mba hisy animation
     function renderPieces(pieces, gameData) {
       const grp = document.getElementById('pieces-group');
-      const isCapturing = pendingCaptures.approach.length > 0 || pendingCaptures.withdrawal.length > 0;
-      document.getElementById('game-board').classList.toggle('lock-board', isCapturing);
-
       const isMyTurn = gameData.turn === myColor;
       const globalCapture = playerHasAnyCapture(pieces, myColor);
-      const isPieceLocked = gameData.movingPiece !== "";
 
-      // 1. Fafana ny pio maty
-      for (let spotId in pieceRegistry) {
-        if (!pieces[spotId]) {
-          pieceRegistry[spotId].remove();
-          delete pieceRegistry[spotId];
+      // Mamantatra ny pio niala sy nipoitra
+      let newPiecesOnBoard = {};
+      let vanished = Object.keys(piecesOnBoard).filter(k => !pieces[k]);
+      let appeared = Object.keys(pieces).filter(k => !piecesOnBoard[k]);
+
+      // Mampiasa pio efa misy fa mikisaka fotsiny (ho an'ny animation)
+      vanished.forEach(vKey => {
+        let color = piecesOnBoard[vKey].color;
+        let target = appeared.find(aKey => pieces[aKey] === color);
+        if (target) {
+          newPiecesOnBoard[target] = piecesOnBoard[vKey];
+          appeared = appeared.filter(a => a !== target);
+        } else {
+          piecesOnBoard[vKey].el.remove();
         }
-      }
+      });
 
-      // 2. Amboarina na amindra ny pio velona
+      // Mamorona pio vaovao raha mbola misy "appeared" sisa
+      appeared.forEach(aKey => {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "piece-group");
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("r", 8);
+        g.appendChild(c);
+        grp.appendChild(g);
+        newPiecesOnBoard[aKey] = { el: g, color: pieces[aKey] };
+      });
+
+      // Tazomina izay tsy nihetsika
+      Object.keys(pieces).forEach(k => {
+        if (!newPiecesOnBoard[k]) newPiecesOnBoard[k] = piecesOnBoard[k];
+      });
+
+      piecesOnBoard = newPiecesOnBoard;
+
+      // Asehoy sy afindrao amin'ny toerany
       for (let spot in pieces) {
         const ri = rows.indexOf(spot[0]), ci = cols.indexOf(spot[1]);
-        let g = pieceRegistry[spot];
-
-        if (!g) {
-          g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-          g.setAttribute("class", "piece-group");
-          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          circle.setAttribute("r", 8);
-          g.appendChild(circle);
-          grp.appendChild(g);
-          pieceRegistry[spot] = g;
-        }
-
-        // Fisorana: Ampiasaina ny transform fa tsy cx/cy
-        g.setAttribute("transform", `translate(${ci * 50}, ${ri * 50})`);
-        
+        const g = piecesOnBoard[spot].el;
         const circle = g.querySelector('circle');
-        const colorPat = pieces[spot] === "mena" ? "mena-pat" : "maintso-pat";
-        circle.setAttribute("fill", `url(#${colorPat})`);
+
+        g.setAttribute("transform", `translate(${ci * 50}, ${ri * 50})`);
+        circle.setAttribute("fill", `url(#${pieces[spot]}-pat)`);
         circle.removeAttribute("class");
         circle.style.pointerEvents = "none";
 
-        // Stroke lojika
-        if (isMyTurn && pieces[spot] === myColor && !isCapturing) {
-          if (selectedSpot === spot) {
-            circle.setAttribute("class", "selected-piece");
-          } else if (lastBlockedSpot === spot) {
-            circle.setAttribute("class", "blocked-piece");
-          } else if (!isPieceLocked) {
-             if (canPieceMove(spot, pieces, myColor, globalCapture)) {
-               circle.setAttribute("class", "movable-piece");
-             }
+        if (isMyTurn && pieces[spot] === myColor) {
+          if (selectedSpot === spot) circle.setAttribute("class", "selected-piece");
+          else if (lastBlockedSpot === spot) circle.setAttribute("class", "blocked-piece");
+          else if (!gameData.movingPiece && canPieceMove(spot, pieces, myColor, globalCapture)) {
+            circle.setAttribute("class", "movable-piece");
           }
         }
 
-        // Capture logic (Cross lines)
+        // Fomba fisamborana
         const isApp = pendingCaptures.approach.includes(spot);
         const isWith = pendingCaptures.withdrawal.includes(spot);
         g.querySelectorAll('.cross-line').forEach(l => l.remove());
@@ -256,17 +231,32 @@
           circle.classList.add("capture-target");
           circle.style.pointerEvents = "all";
           circle.onclick = (e) => { e.stopPropagation(); confirmCapture(isApp ? 'approach' : 'withdrawal'); };
-          
-          const createLine = (x1, y1, x2, y2) => {
-            const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            l.setAttribute("x1", x1); l.setAttribute("y1", y1); l.setAttribute("x2", x2); l.setAttribute("y2", y2);
-            l.setAttribute("class", "cross-line");
-            return l;
-          };
-          g.appendChild(createLine(-8, -8, 8, 8));
-          g.appendChild(createLine(8, -8, -8, 8));
+          g.appendChild(createCross(-5, -5, 5, 5));
+          g.appendChild(createCross(5, -5, -5, 5));
         }
       }
+    }
+
+    function createCross(x1, y1, x2, y2) {
+      const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      l.setAttribute("x1", x1); l.setAttribute("y1", y1); l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+      l.setAttribute("class", "cross-line");
+      return l;
+    }
+
+    function playerHasAnyCapture(pieces, color) {
+        for (let s in pieces) {
+            if (pieces[s] === color) {
+                const moves = allowedMoves[s] || [];
+                for (let t of moves) {
+                    if (!pieces[t]) {
+                        const c = getCaptures(pieces, s, t, color);
+                        if (c.approach.length > 0 || c.withdrawal.length > 0) return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     function canPieceMove(spot, pieces, color, globalCapture) {
@@ -275,8 +265,7 @@
         if (pieces[target]) return false;
         const caps = getCaptures(pieces, spot, target, color);
         const isCap = (caps.approach.length > 0 || caps.withdrawal.length > 0);
-        if (globalCapture) return isCap;
-        return true;
+        return globalCapture ? isCap : true;
       });
     }
 
@@ -307,16 +296,11 @@
       const data = snap.val();
       if (data.turn !== myColor || (pendingCaptures.approach.length > 0 || pendingCaptures.withdrawal.length > 0)) return;
 
-      const globalCapturePossible = playerHasAnyCapture(data.pieces, myColor);
-
       if (canChangePiece && data.pieces[spotID] === myColor) { 
-        const movable = canPieceMove(spotID, data.pieces, myColor, globalCapturePossible);
-        if (movable) {
-          selectedSpot = spotID;
-          lastBlockedSpot = null;
+        if (canPieceMove(spotID, data.pieces, myColor, playerHasAnyCapture(data.pieces, myColor))) {
+          selectedSpot = spotID; lastBlockedSpot = null;
         } else {
-          selectedSpot = null;
-          lastBlockedSpot = spotID;
+          selectedSpot = null; lastBlockedSpot = spotID;
         }
         renderGuides(selectedSpot || "", data);
         renderPieces(data.pieces, data);
@@ -327,19 +311,13 @@
         if (data.visited && data.visited.includes(spotID)) return;
         const caps = getCaptures(data.pieces, selectedSpot, spotID, myColor);
         const isCaptureMove = (caps.approach.length > 0 || caps.withdrawal.length > 0);
-        if (globalCapturePossible && !isCaptureMove) return;
+        if (playerHasAnyCapture(data.pieces, myColor) && !isCaptureMove) return;
 
         const r1 = rows.indexOf(selectedSpot[0]), c1 = cols.indexOf(selectedSpot[1]), r2 = rows.indexOf(spotID[0]), c2 = cols.indexOf(spotID[1]);
         const dir = `${r2-r1},${c2-c1}`;
         if (!canChangePiece && data.lastDir === dir) return;
 
-        // Mifindra ny pio ato anaty Registry koa mba tsy ho foana ny DOM element
         const moveData = { origin: selectedSpot, target: spotID, pieces: {...data.pieces}, dir };
-        
-        const pieceElem = pieceRegistry[selectedSpot];
-        delete pieceRegistry[selectedSpot];
-        pieceRegistry[spotID] = pieceElem;
-
         delete moveData.pieces[selectedSpot]; 
         moveData.pieces[spotID] = myColor;
         const newV = [...(data.visited || []), selectedSpot];
@@ -377,46 +355,34 @@
     }
 
     async function finalizeMove(p, cur, v, d, wasCapture) {
-      if (wasCapture) {
-        const hasMore = checkAvailableCaptures(p, cur, v, d);
-        if (hasMore) {
-          selectedSpot = cur; 
-          canChangePiece = false;
-          await update(ref(db, 'games/' + gameID), { pieces: p, movingPiece: cur, visited: v, lastDir: d });
-          return;
-        }
+      if (wasCapture && checkAvailableCaptures(p, cur, v, d)) {
+        selectedSpot = cur; canChangePiece = false;
+        await update(ref(db, 'games/' + gameID), { pieces: p, movingPiece: cur, visited: v, lastDir: d });
+      } else {
+        await stopMoveManually(p);
       }
-      await stopMoveManually(p);
     }
 
-    function checkAvailableCaptures(pieces, startSpot, visited, lastDir) {
-      const moves = allowedMoves[startSpot] || [];
-      return moves.some(target => {
-        if (pieces[target] || (visited && visited.includes(target))) return false;
-        const r1 = rows.indexOf(startSpot[0]), c1 = cols.indexOf(startSpot[1]);
-        const r2 = rows.indexOf(target[0]), c2 = cols.indexOf(target[1]);
-        if (lastDir === `${r2-r1},${c2-c1}`) return false;
-        const caps = getCaptures(pieces, startSpot, target, myColor);
+    function checkAvailableCaptures(pieces, s, v, d) {
+      const moves = allowedMoves[s] || [];
+      return moves.some(t => {
+        if (pieces[t] || (v && v.includes(t))) return false;
+        const r1 = rows.indexOf(s[0]), c1 = cols.indexOf(s[1]), r2 = rows.indexOf(t[0]), c2 = cols.indexOf(t[1]);
+        if (d === `${r2-r1},${c2-c1}`) return false;
+        const caps = getCaptures(pieces, s, t, myColor);
         return (caps.approach.length > 0 || caps.withdrawal.length > 0);
       });
     }
 
-    async function stopMoveManually(currentPieces) {
+    async function stopMoveManually(p) {
       selectedSpot = null; lastBlockedSpot = null;
-      await update(ref(db, 'games/' + gameID), { 
-        pieces: currentPieces,
-        turn: myColor === "mena" ? "maintso" : "mena", 
-        movingPiece: "", 
-        visited: [], 
-        lastDir: "" 
-      });
+      await update(ref(db, 'games/' + gameID), { pieces: p, turn: myColor === "mena" ? "maintso" : "mena", movingPiece: "", visited: [], lastDir: "" });
     }
 
     document.getElementById('stop-move-btn').onclick = async () => {
       const snap = await get(ref(db, 'games/' + gameID));
       const data = snap.val();
-      if (data.turn !== myColor || !data.movingPiece) return;
-      await stopMoveManually(data.pieces);
+      if (data.turn === myColor && data.movingPiece) await stopMoveManually(data.pieces);
     };
   </script>
 </body>
